@@ -1,0 +1,186 @@
+#!/bin/bash
+
+# Paths to icons for dunst to use in the later notification-* functions. 
+path_icon_outofdate="/home/example_user/.local/share/icons/example_image.svg"              #Change this line to have this variable contain your desired path.
+path_icon_uptodate="/home/example_user/.local/share/icons/example_image.svg"               #Change this line to have this variable contain your desired path.
+path_icon_pacmaninuse="/home/example_user/.local/share/icons/example_image.svg"            #Change this line to have this variable contain your desired path.
+path_icon_failureconnection="/home/example_user/.local/share/icons/example_image.svg"      #Change this line to have this variable contain your desired path.
+path_icon_failureunknown="/home/example_user/.local/share/icons/example_image.svg"         #Change this line to have this variable contain your desired path.
+
+# Paths to sounds for aplay to use in the later notification-* functions.
+path_sound_outofdate="/home/example_user/.local/share/sounds/example_sound.wav"            #Change this line to have this variable contain your desired path.
+path_sound_uptodate="/home/example_user/.local/share/sounds/example_sound.wav"             #Change this line to have this variable contain your desired path.
+path_sound_pacmaninuse="/home/example_user/.local/share/sounds/example_sound.wav"          #Change this line to have this variable contain your desired path.
+path_sound_failureconnection="/home/example_user/.local/share/sounds/example_sound.wav"    #Change this line to have this variable contain your desired path.
+path_sound_failureunknown="/home/example_user/.local/share/sounds/example_sound.wav"       #Change this line to have this variable contain your desired path.
+
+# Erase the following line and this comment once you have manually set the contents of the path_icon_* and path_sound_* varibles.
+echo "Please manually go into the script and edit the contents of the varibles that have the paths for icons and sounds for the dunst notifications." ; exit 1
+
+# Variables that affect how the script runs depending on what options users input.
+mode_brief=0
+mode_redundant=0
+time_updatecheck=3600
+
+# Informs the user on how to run the script if the -h flag is passed.
+correct_usage() {
+    echo "Usage: $0 [-rb] [-t TIME_IN_SECONDS]"
+    echo "Notifies the user if any updates are available from the Pacman package manager."
+    echo "    -t TIME_IN_SECONDS   Time in between update notifications."
+    echo "    -r                   After the first update notification, still summon up to date notifications."
+    echo "    -b                   Only gives one notification on update status and does not run in the background."
+    exit 0
+}
+
+# If the user passes an invalid option or argument to the command, run this function.
+invalid-usage() {
+    echo "Invaild option."
+    echo "Try '$0 -h' for help."
+    exit 1
+}
+
+# The following function acts as an alias for the notify-send command.
+# Its purpose is to allow notifictions to be sent to the user running the display server while the script runs as root.
+notify-send() {
+    #Detect the name of the display in use
+    local display=":$(ls /tmp/.X11-unix/* | sed 's#/tmp/.X11-unix/X##' | head -n 1)"
+
+    #Detect the user using such display
+    local user=$(w -sh | grep "\s$display\s" | awk '{print $1}' | head -n 1)
+
+    #Detect the id of the user
+    local uid=$(id -u $user)
+
+    sudo -u $user DISPLAY=$display DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus notify-send "$@"
+}
+
+# First the function checks if the system has a working internet connection, if not exit with a non-zero code.
+# Then the script checks if pacman is currently in use, if it is in use notify the user.
+# Then, wait until it's out of use to grab output for $pacman_output.
+# The variable $pacman_output grabs output from the pacman -Syu command to use for the later if statements.
+# The subshell that $pacman_output uses, redirects stderr to /dev/null because the interactive prompt Pacman spawns asking if your sure to want to apply updates counts as stderr.
+# That output from the interactive prompt does not get redirected to the $pacman_output variable, thus it needs to be cleaned up.
+check-pacman() {
+    ping -c 5 archlinux.org &> /dev/null
+    if [[ $? -ne 0 ]]
+    then
+        notification-failureconnection
+        exit 46
+    fi
+
+    if [[ -f /var/lib/pacman/db.lck ]]
+    then
+        notification-pacmaninuse
+    fi
+
+    while [[ -f /var/lib/pacman/db.lck ]]
+    do
+        sleep 5
+    done
+    pacman_output=$(echo 'n' | pacman -Syu 2>/dev/null)
+}
+
+# The following functions that start with the word notification contain all the acutal operations that send notifications to the user running the script.
+# They also invoke a certain sound effect whenever a notification is spawned.
+notification-outofdate() {
+    pkg_num=$(echo "$pacman_output" | grep -Eo '^Packages \([0-9]{1,}\)' | grep -Eo '[0-9]{1,}')
+    notify-send -u low -i "$path_icon_outofdate" -t 60000 "Updates Available" "You have $pkg_num packages available for updates."
+    aplay -q $path_sound_outofdate 
+}
+
+notification-uptodate() {
+    notify-send -u low -i "$path_icon_uptodate" -t 20000 "System Up To Date" "No packages require updates."
+    aplay -q $path_sound_uptodate
+}
+
+notification-pacmaninuse() {
+    notify-send -u low -i "$path_icon_pacmaninuse" -t 10000 "Pacman In Use" "Waiting for Pacman to be freed to fetch update results."
+    aplay -q $path_sound_pacmaninuse
+}
+
+notification-failureconnection() {
+    notify-send -u low -i "$path_icon_failureconnection" -t 60000 "Connection Error" "There was a problem with your connection and update availability could not be verified."
+    aplay -q $path_sound_failureconnection 
+}
+
+notification-failureunknown() {
+    notify-send -u low -i "$path_icon_failureunknown" -t 60000 "Unknown Error" "An unknown error has occured with the Pacman package manager."
+    aplay -q $path_sound_failureunknown
+    exit 1
+}
+
+# Checks to see if the user running the script is root.
+user_id=$(id -u)
+if [[ $user_id -ne 0 ]]
+then
+    echo "You must be the root user to run this script."
+    exit 126
+fi
+
+while getopts :hbrt: options
+do
+    case $options in
+	h) correct_usage ;;
+	b) mode_brief=1 ;;
+	r) mode_redundant=1 ;;
+	t) if ! [[ $OPTARG =~ ^[0-9]{1,}$ ]]
+	   then
+	       invalid-usage
+	   fi
+	   time_updatecheck=$OPTARG ;;
+	*) invalid-usage ;;
+    esac
+done
+
+# Waits until the X display server starts to execute the rest of the script.
+until compgen -G /tmp/.X11-unix/* &>/dev/null
+do
+    sleep 5
+done
+
+# If any packages are detected in the output $pacman_output, give a notification saying that the system is available for updates.
+# If the output of $pacman_output contains the string "there is nothing to do", give a notification saying that the system is up to date.
+# If the output of $pacman_output contains neither, give a notification that some unknown error has occured.
+check-pacman
+if echo "$pacman_output" | grep -Eq '^Packages \([0-9]{1,}\)'
+then
+    notification-outofdate
+elif echo "$pacman_output" | grep -Eq '^\s{0,}there is nothing to do'
+then
+    notification-uptodate
+else
+    notification-failureunknown
+fi
+
+# If the user running the script inputs the -b option to the command, exit the script right when the if statement below comes up.
+# This makes it to where the script only notifies the user on update status once and not keep running indefinitely.
+if [[ mode_brief -eq 1 ]]
+then
+    exit 0
+fi
+
+# After the first update check, wait for a $time_updatecheck amount of time to start the next one.
+# The operations in this while loop is almost the exact same as the operations in the first update check,
+# with the exception that if $pacman_output says that there are no packages to update, don't notify the user.
+# The reasoning for this is to not spam the user with notifications that the system is up to date.
+# If the user inputs the -r option, the up to date notifications will be invoked.
+# This section of script is intended to run in the background indefinitely and to only notify the user when updates are available or if an error occurs.
+while true
+do  
+    sleep $time_updatecheck 
+    check-pacman
+    if echo "$pacman_output" | grep -Eq '^Packages \([0-9]{1,}\)'
+    then
+        notification-outofdate
+    elif echo "$pacman_output" | grep -Eq '^\s{0,}there is nothing to do'
+    then
+	if [[ $mode_redundant -eq 0 ]]
+	then
+            :
+        else
+	    notification-uptodate
+	fi
+    else
+        notification-failureunknown
+    fi
+done
