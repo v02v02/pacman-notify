@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Paths to icons for dunst to use in the later notification-* functions. 
+# Paths to icons for dunst to use in the later notification-* functions.
 path_icon_outofdate="/home/example_user/.local/share/icons/example_image.svg"              #Change this line to have this variable contain your desired path.
 path_icon_uptodate="/home/example_user/.local/share/icons/example_image.svg"               #Change this line to have this variable contain your desired path.
 path_icon_pacmaninuse="/home/example_user/.local/share/icons/example_image.svg"            #Change this line to have this variable contain your desired path.
@@ -18,9 +18,10 @@ path_sound_failureunknown="/home/example_user/.local/share/sounds/example_sound.
 echo "Please manually go into the script and edit the contents of the varibles that have the paths for icons and sounds for the dunst notifications." ; exit 1
 
 # Variables that affect how the script runs depending on what options users input.
-mode_brief=0
-mode_redundant=0
 time_updatecheck=3600
+mode_redundant=0
+mode_brief=0
+mode_mute=0
 
 # Informs the user on how to run the script if the -h flag is passed.
 correct_usage() {
@@ -29,6 +30,7 @@ correct_usage() {
     echo "    -t TIME_IN_SECONDS   Time in between update notifications."
     echo "    -r                   After the first update notification, still summon up to date notifications."
     echo "    -b                   Only gives one notification on update status and does not run in the background."
+    echo "    -m                   Does not play any audio cues when a notification is spawned."
     exit 0
 }
 
@@ -52,6 +54,15 @@ notify-send() {
     local uid=$(id -u $user)
 
     sudo -u $user DISPLAY=$display DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus notify-send "$@"
+}
+
+# Plays a specific audio cue if the option -m is not invoked.
+# This function is also used in the later notification-* functions.
+play-audio() {
+    if [[ $mode_mute -eq 0 ]]
+    then
+	aplay -q $1
+    fi
 }
 
 # First the function checks if the system has a working internet connection, if not exit with a non-zero code.
@@ -81,31 +92,31 @@ check-pacman() {
 }
 
 # The following functions that start with the word notification contain all the acutal operations that send notifications to the user running the script.
-# They also invoke a certain sound effect whenever a notification is spawned.
+# They also invoke a certain sound effect whenever a notification is spawned if the -m option was not invoked.
 notification-outofdate() {
     pkg_num=$(echo "$pacman_output" | grep -Eo '^Packages \([0-9]{1,}\)' | grep -Eo '[0-9]{1,}')
     notify-send -u low -i "$path_icon_outofdate" -t 60000 "Updates Available" "You have $pkg_num packages available for updates."
-    aplay -q $path_sound_outofdate 
+    play-audio $path_sound_outofdate 
 }
 
 notification-uptodate() {
     notify-send -u low -i "$path_icon_uptodate" -t 20000 "System Up To Date" "No packages require updates."
-    aplay -q $path_sound_uptodate
+    play-audio $path_sound_uptodate
 }
 
 notification-pacmaninuse() {
     notify-send -u low -i "$path_icon_pacmaninuse" -t 10000 "Pacman In Use" "Waiting for Pacman to be freed to fetch update results."
-    aplay -q $path_sound_pacmaninuse
+    play-audio $path_sound_pacmaninuse
 }
 
 notification-failureconnection() {
     notify-send -u low -i "$path_icon_failureconnection" -t 60000 "Connection Error" "There was a problem with your connection and update availability could not be verified."
-    aplay -q $path_sound_failureconnection 
+    play-audio $path_sound_failureconnection 
 }
 
 notification-failureunknown() {
     notify-send -u low -i "$path_icon_failureunknown" -t 60000 "Unknown Error" "An unknown error has occured with the Pacman package manager."
-    aplay -q $path_sound_failureunknown
+    play-audio $path_sound_failureunknown
     exit 1
 }
 
@@ -117,12 +128,13 @@ then
     exit 126
 fi
 
-while getopts :hbrt: options
+while getopts :hbrmt: options
 do
     case $options in
 	h) correct_usage ;;
 	b) mode_brief=1 ;;
 	r) mode_redundant=1 ;;
+	m) mode_mute=1 ;;
 	t) if ! [[ $OPTARG =~ ^[0-9]{1,}$ ]]
 	   then
 	       invalid-usage
